@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Callable
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -16,6 +17,13 @@ from .oci import InventoryError, parse_inventory, plan_deletion, validate_downlo
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_DB = os.environ.get("OCI_GC_DB", str(BASE_DIR.parent / "data" / "ocigc.db"))
+
+# 复核期间盘点持续更新时的最大重试轮数；超过则提示稍后重试
+MAX_REVIEW_ATTEMPTS = 3
+
+# 测试注入点：每轮复核完成后、确认最新盘点号之前调用，
+# 用于确定性地模拟"复核期间另一份盘点导入成功"。生产中恒为 None。
+review_hook: Callable[[int, int, int], None] | None = None
 
 
 def humansize(n: int) -> str:
@@ -156,61 +164,101 @@ def create_app(db_path: str | None = None) -> FastAPI:
             },
         )
 
+    # 测试注入点 review_hook 为模块级变量（见文件顶部），生产中恒为 None。
+
+    def _busy_page(request: Request, rid: int, latest_id: int, attempts: int):
+        message = (
+            f"盘点连续更新（最新已到 #{latest_id}），{attempts} 轮复核均被新盘点打断，"
+            "无法基于稳定快照完成复核，请稍后重试下载。"
+        )
+        if wants_json(request):
+            return JSONResponse(
+                {"error": "inventory_changing", "message": message,
+                 "latest_inventory": latest_id, "attempts": attempts},
+                status_code=503,
+                headers={"Retry-After": "2"},
+            )
+        return templates.TemplateResponse(
+            request, "busy.html",
+            {"message": message, "latest_id": latest_id, "attempts": attempts, "rid": rid},
+            status_code=503,
+            headers={"Retry-After": "2"},
+        )
+
     @app.get("/rehearsal/{rid}/manifest.json")
     def download_manifest(rid: int, request: Request, con=Depends(get_con)):
         view = db.get_rehearsal(con, rid)
         if view is None:
             return _error_page(request, 404, "预演不存在", f"没有找到预演 #{rid}。")
-        current = db.current_inventory(con)
-        if current is None:
+        if db.latest_inventory_id(con) is None:
             return _error_page(request, 409, "无可用盘点", "尚未导入任何盘点，无法复核。")
 
-        # 盘点不完整 -> 暂停发单，直到导入完整盘点
-        if not current["complete"]:
-            missing = json.loads(current["missing_json"])
-            body = {
-                "error": "inventory_incomplete",
-                "message": f"最新盘点 #{current['id']} 不完整：{len(missing)} 个被引用对象缺失，"
-                "清理清单暂停发放，请导入完整盘点后重试。",
-                "missing": missing,
-            }
-            if wants_json(request):
-                return JSONResponse(body, status_code=409)
-            return templates.TemplateResponse(
-                request, "blocked.html", {"title": "暂停发单", "message": body["message"], "missing": missing, "rid": rid}, status_code=409
-            )
+        # 乐观并发复核：每轮固定一份盘点做完整性检查与冲突检测，
+        # 出结论前再确认它仍是"最新且已成功导入"的盘点；
+        # 若复核期间有新盘点导入，则整轮作废、按新盘点重来。
+        for attempt in range(1, MAX_REVIEW_ATTEMPTS + 1):
+            current = db.current_inventory(con)
+            assert current is not None  # 上面已排除无盘点情况
+            current_id = current["id"]
 
-        graph = db.load_graph(con, current["id"])
-        conflicts = validate_download(view, graph)
-        if conflicts:
-            body = {
-                "error": "conflict",
-                "message": f"最新盘点 #{current['id']} 与预演 #{rid} 存在 {len(conflicts)} 处冲突，整份拒发。",
-                "conflicts": conflicts,
-            }
-            if wants_json(request):
-                return JSONResponse(body, status_code=409)
-            return templates.TemplateResponse(
-                request, "conflict.html", {"message": body["message"], "conflicts": conflicts, "rid": rid}, status_code=409
-            )
+            # 盘点不完整 -> 暂停发单，直到导入完整盘点
+            if not current["complete"]:
+                missing = json.loads(current["missing_json"])
+                body = {
+                    "error": "inventory_incomplete",
+                    "message": f"最新盘点 #{current_id} 不完整：{len(missing)} 个被引用对象缺失，"
+                    "清理清单暂停发放，请导入完整盘点后重试。",
+                    "missing": missing,
+                }
+                if wants_json(request):
+                    return JSONResponse(body, status_code=409)
+                return templates.TemplateResponse(
+                    request, "blocked.html",
+                    {"title": "暂停发单", "message": body["message"], "missing": missing, "rid": rid},
+                    status_code=409,
+                )
 
-        manifest = {
-            "rehearsal_id": view.rehearsal_id,
-            "generated_at": db.utcnow(),
-            "validated_against_inventory": current["id"],
-            "tags": [
-                {"repo": t["repo"], "tag": t["tag"], "digest": t["digest"]} for t in view.tags
-            ],
-            "delete": [d["digest"] for d in view.deletes],
-            "total_bytes": sum(d["size"] for d in view.deletes),
-        }
-        return Response(
-            content=json.dumps(manifest, ensure_ascii=False, indent=2),
-            media_type="application/json",
-            headers={
-                "Content-Disposition": f'attachment; filename="cleanup-rehearsal-{rid}.json"'
-            },
-        )
+            graph = db.load_graph(con, current_id)
+            conflicts = validate_download(view, graph)
+            if conflicts:
+                body = {
+                    "error": "conflict",
+                    "message": f"最新盘点 #{current_id} 与预演 #{rid} 存在 {len(conflicts)} 处冲突，整份拒发。",
+                    "conflicts": conflicts,
+                }
+                if wants_json(request):
+                    return JSONResponse(body, status_code=409)
+                return templates.TemplateResponse(
+                    request, "conflict.html",
+                    {"message": body["message"], "conflicts": conflicts, "rid": rid},
+                    status_code=409,
+                )
+
+            if review_hook is not None:
+                review_hook(rid, current_id, attempt)
+
+            # 决定发单的最后一刻再次确认：期间没有更新的盘点成功导入
+            if db.latest_inventory_id(con) == current_id:
+                manifest = {
+                    "rehearsal_id": view.rehearsal_id,
+                    "generated_at": db.utcnow(),
+                    "validated_against_inventory": current_id,
+                    "tags": [
+                        {"repo": t["repo"], "tag": t["tag"], "digest": t["digest"]} for t in view.tags
+                    ],
+                    "delete": [d["digest"] for d in view.deletes],
+                    "total_bytes": sum(d["size"] for d in view.deletes),
+                }
+                return Response(
+                    content=json.dumps(manifest, ensure_ascii=False, indent=2),
+                    media_type="application/json",
+                    headers={
+                        "Content-Disposition": f'attachment; filename="cleanup-rehearsal-{rid}.json"'
+                    },
+                )
+            # 复核期间有新盘点导入：本轮结论作废，按最新盘点重新复核
+
+        return _busy_page(request, rid, db.latest_inventory_id(con), MAX_REVIEW_ATTEMPTS)
 
     return app
 

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}复核被打断 · OCI 镜像清理预演{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>暂时无法发放清理清单</h2>
+  <div class="warn">⏳ {{ message }}</div>
+  <p class="muted">最新盘点号：#{{ latest_id }} · 已重试 {{ attempts }} 轮。
+    导入动作未被阻塞，等盘点更新告一段落后重新下载即可。</p>
+  <p style="margin-top:16px">
+    <a class="btn" href="/rehearsal/{{ rid }}/manifest.json">稍后重试下载</a>
+    <a class="btn secondary" href="/rehearsal/{{ rid }}">返回预演</a>
+    <a class="btn secondary" href="/">返回首页</a>
+  </p>
+</section>
+{% endblock %}

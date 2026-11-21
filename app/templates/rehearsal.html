@@ -7,8 +7,8 @@
   <p class="muted">创建于 {{ head.created_at }} · 基于盘点 #{{ r.inventory_id }}</p>
 
   {% if current and current.id != r.inventory_id %}
-  <div class="info">ℹ 盘点已更新为 #{{ current.id }}。下载清理清单时将按最新盘点复核：
-    所选标签指向有变、待删对象已缺失或重新可达，都会整份拒发。</div>
+  <div class="info">ℹ 盘点已更新为 #{{ current.id }}。下载清理清单时将按下载瞬间最新且已成功导入的盘点复核：
+    所选标签指向有变、待删对象已缺失或重新可达，都会整份拒发；复核期间若又有新盘点导入，会自动按新盘点重新复核。</div>
   {% endif %}
   {% if current and not current.complete %}
   <div class="warn">⚠ 最新盘点 #{{ current.id }} 不完整（{{ current_missing|length }} 个被引用对象缺失），

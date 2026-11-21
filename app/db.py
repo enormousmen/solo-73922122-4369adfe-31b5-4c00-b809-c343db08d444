@@ -73,9 +73,13 @@ def utcnow() -> str:
 
 def connect(path: str) -> sqlite3.Connection:
     # 每个请求独立连接；FastAPI 依赖与路由可能运行在不同线程，关闭线程检查
-    con = sqlite3.connect(path, check_same_thread=False)
+    con = sqlite3.connect(path, check_same_thread=False, timeout=5.0)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
+    # WAL：复核（读）期间值班员仍可导入盘点（写），互不阻塞
+    if path != ":memory:":
+        con.execute("PRAGMA journal_mode = WAL")
+    con.execute("PRAGMA busy_timeout = 5000")
     return con
 
 
@@ -128,6 +132,12 @@ def insert_inventory(con: sqlite3.Connection, parsed: ParsedInventory) -> int:
 
 def current_inventory(con: sqlite3.Connection) -> sqlite3.Row | None:
     return con.execute("SELECT * FROM inventories ORDER BY id DESC LIMIT 1").fetchone()
+
+
+def latest_inventory_id(con: sqlite3.Connection) -> int | None:
+    """当前最新且已成功导入（整事务提交后才可见）的盘点号。"""
+    row = con.execute("SELECT MAX(id) AS mid FROM inventories").fetchone()
+    return None if row is None or row["mid"] is None else int(row["mid"])
 
 
 def list_inventories(con: sqlite3.Connection) -> list[sqlite3.Row]:

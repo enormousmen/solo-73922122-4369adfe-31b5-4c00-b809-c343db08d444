@@ -41,8 +41,18 @@ def base_inventory() -> dict:
 
 
 @pytest.fixture()
-def client(tmp_path):
-    app = create_app(str(tmp_path / "test.db"))
+def app(tmp_path):
+    application = create_app(str(tmp_path / "test.db"))
+    # 每个用例默认不安装复核注入点
+    import app.main as main_mod
+
+    main_mod.review_hook = None
+    yield application
+    main_mod.review_hook = None
+
+
+@pytest.fixture()
+def client(app):
     with TestClient(app) as c:
         yield c
 
