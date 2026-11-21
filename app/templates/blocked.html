@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}暂停发单 · OCI 镜像清理预演{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>清理清单暂停发放</h2>
+  <div class="warn">⏸ {{ message }}</div>
+  {% if missing %}
+  <details open><summary class="muted">缺失的被引用对象（{{ missing|length }}）</summary>
+    <ul>{% for m in missing %}<li><code>{{ m }}</code></li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+  <p style="margin-top:16px"><a class="btn secondary" href="/rehearsal/{{ rid }}">返回预演</a>
+  <a class="btn secondary" href="/">返回首页</a></p>
+</section>
+{% endblock %}

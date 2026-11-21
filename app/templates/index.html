@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if request.query_params.get('imported') %}
+<div class="ok">✔ 盘点 #{{ request.query_params.get('imported') }} 导入成功。</div>
+{% endif %}
+
+<section class="card">
+  <h2>当前盘点</h2>
+  {% if inv %}
+  <div class="grid">
+    <div>盘点编号<br><strong>#{{ inv.id }}</strong></div>
+    <div>导入时间<br><strong>{{ inv.imported_at }}</strong></div>
+    <div>采集时间<br><strong>{{ inv.captured_at or '未知' }}</strong></div>
+    <div>仓库 / 标签<br><strong>{{ inv.repo_count }} / {{ inv.tag_count }}</strong></div>
+    <div>对象数<br><strong>{{ inv.object_count }}</strong></div>
+    <div>对象总字节<br><strong class="num">{{ inv.total_bytes|humansize }}</strong></div>
+  </div>
+  {% if not inv.complete %}
+  <div class="warn">⚠ 盘点不完整：{{ missing|length }} 个被引用对象在 objects 中缺失。
+    <strong>清理清单暂停发放</strong>，直到导入完整盘点。</div>
+  <details><summary class="muted">查看缺失摘要（{{ missing|length }}）</summary>
+    <ul>{% for m in missing %}<li><code>{{ m }}</code></li>{% endfor %}</ul>
+  </details>
+  {% else %}
+  <div class="ok">✔ 盘点完整，可正常预演与发放清理清单。</div>
+  {% endif %}
+  {% else %}
+  <p>尚未导入盘点，请先在下方导入全仓盘点 JSON。</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>导入盘点</h2>
+  <form method="post" action="/inventory" enctype="multipart/form-data">
+    <p>上传 JSON 文件：<input type="file" name="file" accept=".json,application/json"></p>
+    <p>或粘贴内容：</p>
+    <textarea name="payload" placeholder='{"repositories": [...], "objects": {...}}'></textarea>
+    <p><button type="submit">导入</button>
+    <span class="muted">每次导入生成新盘点；下载清理清单时一律按最新盘点复核。</span></p>
+  </form>
+</section>
+
+{% if inv and repos %}
+<section class="card">
+  <h2>勾选待退役标签（基于盘点 #{{ inv.id }}）</h2>
+  <form method="post" action="/rehearsal">
+    {% for repo, tags in repos.items() %}
+    {% set rid = loop.index %}
+    <h3>
+      <label><input type="checkbox" onchange="document.querySelectorAll('.tag-{{ rid }}').forEach(c => c.checked = this.checked)"> <strong>{{ repo }}</strong></label>
+      <span class="muted">（{{ tags|length }} 个标签）</span>
+    </h3>
+    <div>
+      {% for tag, digest in tags %}
+      <label class="tag"><input type="checkbox" class="tag-{{ rid }}" name="selected" value="{{ repo }}={{ tag }}">
+        {{ tag }} <code>{{ digest|shortdigest }}</code></label>
+      {% endfor %}
+    </div>
+    {% endfor %}
+    <p><button type="submit">开始预演</button></p>
+  </form>
+</section>
+{% endif %}
+
+{% if rehearsals %}
+<section class="card">
+  <h2>预演记录</h2>
+  <table>
+    <tr><th>#</th><th>创建时间</th><th>基于盘点</th><th>退役标签数</th><th>待删对象数</th><th class="num">可释放</th><th></th></tr>
+    {% for r in rehearsals %}
+    <tr>
+      <td>{{ r.id }}</td>
+      <td>{{ r.created_at }}</td>
+      <td>#{{ r.inventory_id }}</td>
+      <td>{{ r.tag_count }}</td>
+      <td>{{ r.delete_count }}</td>
+      <td class="num">{{ r.total_bytes|humansize }}</td>
+      <td><a href="/rehearsal/{{ r.id }}">查看 / 下载清单</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endif %}
+
+{% if inventories %}
+<section class="card">
+  <h2>盘点历史</h2>
+  <table>
+    <tr><th>#</th><th>导入时间</th><th>采集时间</th><th>仓库</th><th>标签</th><th>对象</th><th class="num">总字节</th><th>完整性</th></tr>
+    {% for i in inventories %}
+    <tr>
+      <td>{{ i.id }}</td>
+      <td>{{ i.imported_at }}</td>
+      <td>{{ i.captured_at or '—' }}</td>
+      <td>{{ i.repo_count }}</td>
+      <td>{{ i.tag_count }}</td>
+      <td>{{ i.object_count }}</td>
+      <td class="num">{{ i.total_bytes|humansize }}</td>
+      <td>{{ '完整' if i.complete else '不完整' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endif %}
+
+{% endblock %}

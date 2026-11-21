@@ -1,0 +1,13 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      OCI_GC_DB: /data/ocigc.db
+    volumes:
+      - ocigc-data:/data
+    restart: unless-stopped
+
+volumes:
+  ocigc-data:

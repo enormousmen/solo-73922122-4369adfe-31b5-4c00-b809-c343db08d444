@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}发单被拒 · OCI 镜像清理预演{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>清理清单整份拒发</h2>
+  <div class="err">✖ {{ message }}</div>
+  <table>
+    <tr><th>冲突类型</th><th>对象</th><th>说明</th></tr>
+    {% for c in conflicts %}
+    <tr>
+      <td>
+        {% if c.type == 'tag_moved' %}标签指向有变
+        {% elif c.type == 'tag_missing' %}标签已不存在
+        {% elif c.type == 'object_missing' %}待删对象已缺失
+        {% elif c.type == 'object_reachable' %}待删对象重新可达
+        {% else %}{{ c.type }}{% endif %}
+      </td>
+      <td>{% if c.repo %}<code>{{ c.repo }}:{{ c.tag }}</code>{% else %}<code>{{ c.digest }}</code>{% endif %}</td>
+      <td>{{ c.detail }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p style="margin-top:16px"><a class="btn secondary" href="/rehearsal/{{ rid }}">返回预演</a>
+  <a class="btn secondary" href="/">返回首页</a></p>
+</section>
+{% endblock %}

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}预演 #{{ r.rehearsal_id }} · OCI 镜像清理预演{% endblock %}
+{% block content %}
+
+<section class="card">
+  <h2>预演 #{{ r.rehearsal_id }}</h2>
+  <p class="muted">创建于 {{ head.created_at }} · 基于盘点 #{{ r.inventory_id }}</p>
+
+  {% if current and current.id != r.inventory_id %}
+  <div class="info">ℹ 盘点已更新为 #{{ current.id }}。下载清理清单时将按最新盘点复核：
+    所选标签指向有变、待删对象已缺失或重新可达，都会整份拒发。</div>
+  {% endif %}
+  {% if current and not current.complete %}
+  <div class="warn">⚠ 最新盘点 #{{ current.id }} 不完整（{{ current_missing|length }} 个被引用对象缺失），
+    清理清单暂停发放，直到导入完整盘点。</div>
+  {% endif %}
+
+  <h3>待退役标签（{{ r.tags|length }}）</h3>
+  <table>
+    <tr><th>仓库</th><th>标签</th><th>预演时指向</th></tr>
+    {% for t in r.tags %}
+    <tr><td>{{ t.repo }}</td><td>{{ t.tag }}</td><td><code>{{ t.digest }}</code></td></tr>
+    {% endfor %}
+  </table>
+
+  <h3>仅因此次退役而不再可达的对象（{{ r.deletes|length }} 个，合计 {{ total|humansize }}）</h3>
+  {% if r.deletes %}
+  <table>
+    <tr><th>摘要</th><th>类型</th><th class="num">字节</th></tr>
+    {% for d in r.deletes %}
+    <tr><td><code>{{ d.digest }}</code></td><td>{{ d.type }}</td><td class="num">{{ d.size|humansize }}</td></tr>
+    {% endfor %}
+    <tr><td colspan="2"><strong>合计</strong></td><td class="num"><strong>{{ total|humansize }}</strong></td></tr>
+  </table>
+  {% else %}
+  <p class="muted">没有对象会因这批退役而变得不可达（它们仍被其它标签或保留版本引用）。</p>
+  {% endif %}
+
+  <p style="margin-top:16px">
+    <a class="btn" href="/rehearsal/{{ r.rehearsal_id }}/manifest.json">下载清理清单</a>
+    <a class="btn secondary" href="/">返回首页</a>
+  </p>
+  <p class="muted">清单只包含本次预演的标签、原指向与待删摘要；下载瞬间会用最新盘点复核，发现冲突则整份拒发。</p>
+</section>
+
+{% endblock %}
